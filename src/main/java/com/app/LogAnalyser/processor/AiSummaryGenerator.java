@@ -15,142 +15,124 @@ import java.util.concurrent.ConcurrentHashMap;
 @Component
 public class AiSummaryGenerator {
 
-    @Value("${gemini.api.key:mock}")
-    private String apiKey;
-
-    @Value("${gemini.api.url:mock}")
+    @Value("${ollama.api.url:mock}")
     private String apiUrl;
+
+    @Value("${ollama.model:llama3.2}")
+    private String model;
 
     private final RestTemplate restTemplate;
 
-    // Cache: errorType → AiSummary
     private final Map<String, AiSummary> summaryCache = new ConcurrentHashMap<>();
 
     public AiSummaryGenerator(RestTemplate restTemplate) {
         this.restTemplate = restTemplate;
     }
 
-    // -------------------------------------------------------
-    // NEW METHOD — analyze all groups in ONE single API call
-    // -------------------------------------------------------
     public List<AiSummary> generateAll(List<ErrorGroup> groups) {
 
-        // If no API key, return mock for all groups
-        if (apiKey == null || apiKey.equals("mock")) {
-            log.warn("No Gemini API key. Returning mock summaries for all groups.");
-            return groups.stream()
-                    .map(this::buildMockSummary)
-                    .toList();
-        }
-
-        try {
-            // Build one combined prompt for ALL groups
-            String combinedPrompt = buildCombinedPrompt(groups);
-            log.info("Sending ONE combined Gemini call for {} groups", groups.size());
-
-            String aiResponse = callGemini(combinedPrompt);
-            return parseCombinedResponse(aiResponse, groups);
-
-        } catch (Exception e) {
-            log.error("Gemini combined call failed. Reason: {}", e.getMessage());
-            // Fallback — return fallback summary for each group
-            return groups.stream()
-                    .map(g -> AiSummary.fallback(g.getErrorType()))
-                    .toList();
-        }
-    }
-
-    // Builds one prompt containing ALL groups
-    private String buildCombinedPrompt(List<ErrorGroup> groups) {
-        StringBuilder prompt = new StringBuilder();
-        prompt.append("You are a backend systems reliability engineer.\n");
-        prompt.append("Analyze each error group below and for EACH one respond in exactly 3 lines:\n");
-        prompt.append("Line 1 - Problem Summary:\n");
-        prompt.append("Line 2 - Root Cause:\n");
-        prompt.append("Line 3 - Suggested Fix:\n");
-        prompt.append("Separate each group's analysis with ---\n\n");
-
-        for (int i = 0; i < groups.size(); i++) {
-            prompt.append("Group ").append(i + 1).append(":\n");
-            prompt.append(groups.get(i).toStructuredSummary());
-            prompt.append("\n");
-        }
-
-        return prompt.toString();
-    }
-
-    // Parses the combined response — splits by --- separator
-    private List<AiSummary> parseCombinedResponse(String response, List<ErrorGroup> groups) {
         List<AiSummary> summaries = new ArrayList<>();
 
-        // Split the response by --- separator
-        String[] sections = response.split("---");
+        for (ErrorGroup group : groups) {
 
-        for (int i = 0; i < groups.size(); i++) {
+            String cacheKey = group.getErrorType();
 
-            // If AI gave fewer sections than groups, use fallback
-            if (i >= sections.length) {
-                log.warn("Missing AI response for group {}. Using fallback.", groups.get(i).getErrorType());
-                summaries.add(AiSummary.fallback(groups.get(i).getErrorType()));
+            if (summaryCache.containsKey(cacheKey)) {
+                log.info("Cache hit! Reusing summary for: {}", cacheKey);
+                summaries.add(summaryCache.get(cacheKey));
                 continue;
             }
 
-            String section = sections[i].trim();
-            String[] lines = section.split("\\n");
+            if (apiUrl == null || apiUrl.equals("mock")) {
+                log.warn("No Ollama URL configured. Returning mock for: {}", cacheKey);
+                summaries.add(buildMockSummary(group));
+                continue;
+            }
 
-            String problemSummary = lines.length > 0 ?
-                    lines[0].replaceAll("(?i).*summary[:\\-]?\\s*", "").trim() : "N/A";
-            String rootCause = lines.length > 1 ?
-                    lines[1].replaceAll("(?i).*cause[:\\-]?\\s*", "").trim() : "N/A";
-            String suggestedFix = lines.length > 2 ?
-                    lines[2].replaceAll("(?i).*fix[:\\-]?\\s*", "").trim() : "N/A";
+            try {
+                log.info("Calling Ollama for: {}", cacheKey);
+                String prompt = buildSinglePrompt(group);
+                String aiResponse = callOllama(prompt);
+                AiSummary summary = parseSingleResponse(aiResponse, group);
 
-            AiSummary summary = AiSummary.builder()
-                    .problemSummary(problemSummary)
-                    .rootCause(rootCause)
-                    .suggestedFix(suggestedFix)
-                    .mockFallback(false)
-                    .build();
+                summaryCache.put(cacheKey, summary);
+                summaries.add(summary);
 
-            // Store in cache for future use
-            summaryCache.put(groups.get(i).getErrorType(), summary);
-            summaries.add(summary);
+            } catch (Exception e) {
+                log.error("Ollama call failed for {}. Reason: {}", cacheKey, e.getMessage());
+                summaries.add(AiSummary.fallback(group.getErrorType()));
+            }
         }
 
         return summaries;
     }
 
-    private String callGemini(String prompt) {
-        String url = apiUrl + "?key=" + apiKey;
+    private String buildSinglePrompt(ErrorGroup group) {
+        return "You are a backend systems reliability engineer.\n" +
+                "Analyze the error below. Reply in EXACTLY 3 lines. No extra text.\n" +
+                "Line 1 must start with SUMMARY:\n" +
+                "Line 2 must start with CAUSE:\n" +
+                "Line 3 must start with FIX:\n" +
+                "No markdown. No bold. No bullet points.\n\n" +
+                group.toStructuredSummary();
+    }
+
+    private String callOllama(String prompt) {
 
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
 
-        Map<String, Object> text = new HashMap<>();
-        text.put("text", prompt);
-
-        Map<String, Object> part = new HashMap<>();
-        part.put("parts", List.of(text));
-
         Map<String, Object> body = new HashMap<>();
-        body.put("contents", List.of(part));
-
+        body.put("model", model);
+        body.put("prompt", prompt);
+        body.put("stream", false);
         HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
 
-        ResponseEntity<Map> response = restTemplate.postForEntity(url, request, Map.class);
+        ResponseEntity<Map> response = restTemplate.postForEntity(
+                apiUrl, request, Map.class);
 
-        List<Map> candidates = (List<Map>) response.getBody().get("candidates");
-        Map content = (Map) candidates.get(0).get("content");
-        List<Map> parts = (List<Map>) content.get("parts");
-        return parts.get(0).get("text").toString();
+        return response.getBody().get("response").toString();
+    }
+
+    private AiSummary parseSingleResponse(String response, ErrorGroup group) {
+
+        String[] lines = response.split("\\n");
+
+        String problemSummary = "N/A";
+        String rootCause = "N/A";
+        String suggestedFix = "N/A";
+
+        for (String line : lines) {
+            String trimmed = line.trim();
+            if (trimmed.toUpperCase().startsWith("SUMMARY:")) {
+                problemSummary = trimmed.substring("SUMMARY:".length()).trim();
+            } else if (trimmed.toUpperCase().startsWith("CAUSE:")) {
+                rootCause = trimmed.substring("CAUSE:".length()).trim();
+            } else if (trimmed.toUpperCase().startsWith("FIX:")) {
+                suggestedFix = trimmed.substring("FIX:".length()).trim();
+            }
+        }
+
+        if (problemSummary.equals("N/A") && rootCause.equals("N/A")) {
+            log.warn("Could not parse Ollama response for {}. Using fallback.",
+                    group.getErrorType());
+            return AiSummary.fallback(group.getErrorType());
+        }
+
+        return AiSummary.builder()
+                .problemSummary(problemSummary)
+                .rootCause(rootCause)
+                .suggestedFix(suggestedFix)
+                .mockFallback(false)
+                .build();
     }
 
     private AiSummary buildMockSummary(ErrorGroup group) {
         return AiSummary.builder()
                 .problemSummary("Multiple " + group.getErrorType() +
                         " errors detected in window " + group.getTimeWindow())
-                .rootCause("Possible service instability or misconfiguration causing repeated failures.")
-                .suggestedFix("Check service logs, verify configurations, and review recent deployments.")
+                .rootCause("Possible service instability causing repeated failures.")
+                .suggestedFix("Check service logs and review recent deployments.")
                 .mockFallback(true)
                 .build();
     }
