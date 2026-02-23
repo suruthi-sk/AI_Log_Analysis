@@ -18,7 +18,7 @@ public class AiSummaryGenerator {
     @Value("${ollama.api.url:mock}")
     private String apiUrl;
 
-    @Value("${ollama.model:llama3.2}")
+    @Value("${ollama.model:gemma3:1b}")
     private String model;
 
     private final RestTemplate restTemplate;
@@ -33,17 +33,17 @@ public class AiSummaryGenerator {
 
         List<AiSummary> summaries = new ArrayList<>();
 
-        for (ErrorGroup group : groups) {
+        for(ErrorGroup group : groups) {
 
             String cacheKey = group.getErrorType();
 
-            if (summaryCache.containsKey(cacheKey)) {
+            if(summaryCache.containsKey(cacheKey)) {
                 log.info("Cache hit! Reusing summary for: {}", cacheKey);
                 summaries.add(summaryCache.get(cacheKey));
                 continue;
             }
 
-            if (apiUrl == null || apiUrl.equals("mock")) {
+            if(apiUrl == null || apiUrl.equals("mock")) {
                 log.warn("No Ollama URL configured. Returning mock for: {}", cacheKey);
                 summaries.add(buildMockSummary(group));
                 continue;
@@ -51,14 +51,14 @@ public class AiSummaryGenerator {
 
             try {
                 log.info("Calling Ollama for: {}", cacheKey);
-                String prompt = buildSinglePrompt(group);
+                String prompt = createPrompt(group);
                 String aiResponse = callOllama(prompt);
                 AiSummary summary = parseSingleResponse(aiResponse, group);
 
                 summaryCache.put(cacheKey, summary);
                 summaries.add(summary);
 
-            } catch (Exception e) {
+            } catch(Exception e) {
                 log.error("Ollama call failed for {}. Reason: {}", cacheKey, e.getMessage());
                 summaries.add(AiSummary.fallback(group.getErrorType()));
             }
@@ -67,8 +67,8 @@ public class AiSummaryGenerator {
         return summaries;
     }
 
-    private String buildSinglePrompt(ErrorGroup group) {
-        return "You are a backend systems reliability engineer.\n" +
+    private String createPrompt(ErrorGroup group) {
+        return "You are a software debug engineer.\n" +
                 "Analyze the error below. Reply in EXACTLY 3 lines. No extra text.\n" +
                 "Line 1 must start with SUMMARY:\n" +
                 "Line 2 must start with CAUSE:\n" +
@@ -88,8 +88,8 @@ public class AiSummaryGenerator {
         body.put("stream", false);
         HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
 
-        ResponseEntity<Map> response = restTemplate.postForEntity(
-                apiUrl, request, Map.class);
+        ResponseEntity<Map> response = restTemplate.postForEntity(apiUrl, request, Map.class);
+        System.out.println(response);
 
         return response.getBody().get("response").toString();
     }
@@ -102,20 +102,19 @@ public class AiSummaryGenerator {
         String rootCause = "N/A";
         String suggestedFix = "N/A";
 
-        for (String line : lines) {
+        for(String line : lines) {
             String trimmed = line.trim();
-            if (trimmed.toUpperCase().startsWith("SUMMARY:")) {
+            if(trimmed.toUpperCase().startsWith("SUMMARY:")) {
                 problemSummary = trimmed.substring("SUMMARY:".length()).trim();
-            } else if (trimmed.toUpperCase().startsWith("CAUSE:")) {
+            } else if(trimmed.toUpperCase().startsWith("CAUSE:")) {
                 rootCause = trimmed.substring("CAUSE:".length()).trim();
-            } else if (trimmed.toUpperCase().startsWith("FIX:")) {
+            } else if(trimmed.toUpperCase().startsWith("FIX:")) {
                 suggestedFix = trimmed.substring("FIX:".length()).trim();
             }
         }
 
-        if (problemSummary.equals("N/A") && rootCause.equals("N/A")) {
-            log.warn("Could not parse Ollama response for {}. Using fallback.",
-                    group.getErrorType());
+        if(problemSummary.equals("N/A") && rootCause.equals("N/A")) {
+            log.warn("Could not parse Ollama response for {}. Using fallback.", group.getErrorType());
             return AiSummary.fallback(group.getErrorType());
         }
 
@@ -129,8 +128,7 @@ public class AiSummaryGenerator {
 
     private AiSummary buildMockSummary(ErrorGroup group) {
         return AiSummary.builder()
-                .problemSummary("Multiple " + group.getErrorType() +
-                        " errors detected in window " + group.getTimeWindow())
+                .problemSummary("Multiple " + group.getErrorType() + " errors detected in window " + group.getTimeWindow())
                 .rootCause("Possible service instability causing repeated failures.")
                 .suggestedFix("Check service logs and review recent deployments.")
                 .mockFallback(true)

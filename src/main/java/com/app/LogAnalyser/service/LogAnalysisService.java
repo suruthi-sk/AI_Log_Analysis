@@ -21,9 +21,7 @@ public class LogAnalysisService {
     private final ErrorAggregator errorAggregator;
     private final AiSummaryGenerator aiSummaryGenerator;
 
-    public LogAnalysisService(LogParser logParser,
-                              ErrorAggregator errorAggregator,
-                              AiSummaryGenerator aiSummaryGenerator) {
+    public LogAnalysisService(LogParser logParser, ErrorAggregator errorAggregator, AiSummaryGenerator aiSummaryGenerator) {
         this.logParser = logParser;
         this.errorAggregator = errorAggregator;
         this.aiSummaryGenerator = aiSummaryGenerator;
@@ -33,17 +31,13 @@ public class LogAnalysisService {
 
         log.info("Starting log analysis...");
 
-        // Step 1: Parse
         List<LogEntry> entries = logParser.parse(logContent);
 
-        // Step 2: Aggregate
         List<ErrorGroup> groups = errorAggregator.aggregate(entries);
 
-        // Step 3: ONE single AI call for ALL groups
         List<AiSummary> summaries = aiSummaryGenerator.generateAll(groups);
 
-        // Step 4: Assign each summary to its group
-        for (int i = 0; i < groups.size(); i++) {
+        for(int i = 0; i < groups.size(); i++) {
             groups.get(i).setAiSummary(summaries.get(i));
         }
 

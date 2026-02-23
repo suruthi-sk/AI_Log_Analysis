@@ -28,13 +28,13 @@ public class LogParser {
         List<LogEntry> entries = new ArrayList<>();
         String[] lines = logContent.split("\\r?\\n");
 
-        for (String line : lines) {
+        for(String line : lines) {
 
-            if (line.isBlank()) continue;
+            if(line.isBlank()) continue;
 
             Matcher matcher = LOG_PATTERN.matcher(line.trim());
 
-            if (!matcher.matches()) {
+            if(!matcher.matches()) {
                 log.warn("Skipping malformed line: {}", line);
                 continue;
             }
@@ -46,7 +46,7 @@ public class LogParser {
 
             Map<String, String> metadata = new LinkedHashMap<>();
             Matcher metaMatcher = METADATA_PATTERN.matcher(rest);
-            while (metaMatcher.find()) {
+            while(metaMatcher.find()) {
                 metadata.put(metaMatcher.group(1), metaMatcher.group(2));
             }
 

@@ -21,7 +21,7 @@ public class LogEntry {
         public static LogLevel fromString(String value) {
             try {
                 return LogLevel.valueOf(value.toUpperCase());
-            } catch (IllegalArgumentException e) {
+            } catch(IllegalArgumentException e) {
                 return UNKNOWN;
             }
         }

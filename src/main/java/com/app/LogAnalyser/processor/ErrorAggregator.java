@@ -23,14 +23,14 @@ public class ErrorAggregator {
 
         Map<String, List<LogEntry>> grouped = new LinkedHashMap<>();
 
-        for (LogEntry entry : entries) {
+        for(LogEntry entry : entries) {
             String key = entry.getErrorType() + "|" + getTimeBucket(entry.getTimestamp());
             grouped.computeIfAbsent(key, k -> new ArrayList<>()).add(entry);
         }
 
         List<ErrorGroup> errorGroups = new ArrayList<>();
 
-        for (Map.Entry<String, List<LogEntry>> mapEntry : grouped.entrySet()) {
+        for(Map.Entry<String, List<LogEntry>> mapEntry : grouped.entrySet()) {
 
             List<LogEntry> groupEntries = mapEntry.getValue();
             LogEntry first = groupEntries.get(0);
@@ -40,7 +40,7 @@ public class ErrorAggregator {
             String timeWindow = getTimeWindowLabel(first.getTimestamp());
 
             Map<String, List<String>> aggregatedMetadata = new LinkedHashMap<>();
-            for (LogEntry e : groupEntries) {
+            for(LogEntry e : groupEntries) {
                 e.getMetadata().forEach((key, value) -> {
                     List<String> values = aggregatedMetadata.computeIfAbsent(key, k -> new ArrayList<>());
                     if (!values.contains(value)) {
@@ -73,7 +73,6 @@ public class ErrorAggregator {
     private String getTimeWindowLabel(LocalDateTime time) {
         int startMinute = (time.getMinute() / timeWindowMinutes) * timeWindowMinutes;
         int endMinute = startMinute + timeWindowMinutes;
-        return String.format("%02d:%02d - %02d:%02d",
-                time.getHour(), startMinute, time.getHour(), endMinute);
+        return String.format("%02d:%02d - %02d:%02d", time.getHour(), startMinute, time.getHour(), endMinute);
     }
 }

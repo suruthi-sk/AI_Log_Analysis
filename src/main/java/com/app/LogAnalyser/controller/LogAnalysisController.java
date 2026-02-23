@@ -21,13 +21,12 @@ public class LogAnalysisController {
         this.logAnalysisService = logAnalysisService;
     }
 
-
     @PostMapping("/analyze")
     public ResponseEntity<AnalysisResponse> analyze(@RequestParam("file") MultipartFile file) {
 
         log.info("Received file: {}, size: {} bytes", file.getOriginalFilename(), file.getSize());
 
-        if (file.isEmpty()) {
+        if(file.isEmpty()) {
             log.warn("Empty file received");
             return ResponseEntity.badRequest().build();
         }
@@ -37,7 +36,7 @@ public class LogAnalysisController {
             AnalysisResponse response = logAnalysisService.analyze(logContent);
             return ResponseEntity.ok(response);
 
-        } catch (IOException e) {
+        } catch(IOException e) {
             log.error("Failed to read uploaded file: {}", e.getMessage());
             return ResponseEntity.internalServerError().build();
         }
