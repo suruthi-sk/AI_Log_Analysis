@@ -74,15 +74,6 @@ public class ErrorAggregator {
             }
         }
 
-        result.forEach((timeWindow, bucket) ->
-                bucket.forEach((errorType, group) -> {
-                    group.setSpikeDetected(group.getCount() >= spikeThreshold);
-                    log.info("Group: {} | window: {} | count: {} | spike: {}",
-                            errorType, timeWindow, group.getCount(),
-                            group.isSpikeDetected());
-                })
-        );
-
         return result;
     }
 
