@@ -1,7 +1,6 @@
 package com.app.LogAnalyser.service;
 
 import com.app.LogAnalyser.model.AnalysisResponse;
-import com.app.LogAnalyser.model.AiSummary;
 import com.app.LogAnalyser.model.ErrorGroup;
 import com.app.LogAnalyser.model.LogEntry;
 import com.app.LogAnalyser.processor.AiSummaryGenerator;
@@ -14,6 +13,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 @Slf4j
 @Service
@@ -35,18 +35,14 @@ public class LogAnalysisService {
 
         List<LogEntry> entries = logParser.parse(inputStream);
 
-        List<ErrorGroup> groups = errorAggregator.aggregate(entries);
+        Map<String, Map<String, ErrorGroup>> bucketedGroups = errorAggregator.aggregate(entries);
 
-        List<AiSummary> summaries = aiSummaryGenerator.generateAll(groups);
+        aiSummaryGenerator.generateAndAssign(bucketedGroups);
 
-        for(int i = 0; i < groups.size(); i++) {
-            groups.get(i).setAiSummary(summaries.get(i));
-        }
-
-        log.info("Analysis complete. {} groups found.", groups.size());
+        log.info("Analysis complete. {} time windows found.", bucketedGroups.size());
 
         return AnalysisResponse.builder()
-                .groups(groups)
+                .groups(bucketedGroups)
                 .totalLinesProcessed(entries.size())
                 .analyzedAt(LocalDateTime.now())
                 .build();

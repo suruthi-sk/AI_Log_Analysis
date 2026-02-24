@@ -3,6 +3,8 @@ package com.app.LogAnalyser.model;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import lombok.Builder;
 import lombok.Data;
+
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 
@@ -16,7 +18,10 @@ public class ErrorGroup {
     private boolean spikeDetected;
     private Map<String, List<String>> aggregatedMetadata;
     private AiSummary aiSummary;
+    private List<String> timestamps;
 
+    @JsonIgnore
+    private List<LogEntry> entries;
 
     public String toStructuredSummary() {
         StringBuilder sb = new StringBuilder();
@@ -24,10 +29,11 @@ public class ErrorGroup {
         sb.append("Time Window: ").append(timeWindow).append("\n");
         sb.append("Occurrences: ").append(count).append("\n");
         sb.append("Spike Detected: ").append(spikeDetected ? "Yes" : "No").append("\n");
-        if(aggregatedMetadata != null && !aggregatedMetadata.isEmpty()) {
+        if (aggregatedMetadata != null && !aggregatedMetadata.isEmpty()) {
             sb.append("Affected Resources:\n");
             aggregatedMetadata.forEach((key, values) ->
-                    sb.append("  ").append(key).append(": ").append(String.join(", ", values)).append("\n")
+                    sb.append("  ").append(key).append(": ")
+                            .append(String.join(", ", values)).append("\n")
             );
         }
         return sb.toString();
