@@ -45,7 +45,9 @@ public class AiSummaryGenerator {
 
             if(apiUrl == null || apiUrl.equals("mock")) {
                 log.warn("No Ollama URL configured. Returning mock for: {}", cacheKey);
-                summaries.add(buildMockSummary(group));
+                AiSummary mock = buildMockSummary(group);
+                summaryCache.put(cacheKey, mock);
+                summaries.add(mock);
                 continue;
             }
 
