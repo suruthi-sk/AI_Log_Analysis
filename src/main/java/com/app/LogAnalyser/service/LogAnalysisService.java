@@ -10,6 +10,8 @@ import com.app.LogAnalyser.processor.LogParser;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -27,11 +29,11 @@ public class LogAnalysisService {
         this.aiSummaryGenerator = aiSummaryGenerator;
     }
 
-    public AnalysisResponse analyze(String logContent) {
+    public AnalysisResponse analyze(InputStream inputStream) throws IOException {
 
         log.info("Starting log analysis...");
 
-        List<LogEntry> entries = logParser.parse(logContent);
+        List<LogEntry> entries = logParser.parse(inputStream);
 
         List<ErrorGroup> groups = errorAggregator.aggregate(entries);
 

@@ -8,7 +8,6 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 
 @Slf4j
 @RestController
@@ -32,8 +31,7 @@ public class LogAnalysisController {
         }
 
         try {
-            String logContent = new String(file.getBytes(), StandardCharsets.UTF_8);
-            AnalysisResponse response = logAnalysisService.analyze(logContent);
+            AnalysisResponse response = logAnalysisService.analyze(file.getInputStream());
             return ResponseEntity.ok(response);
 
         } catch(IOException e) {
