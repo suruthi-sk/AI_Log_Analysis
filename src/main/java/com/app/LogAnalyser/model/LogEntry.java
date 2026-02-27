@@ -12,6 +12,8 @@ public class LogEntry {
     private LocalDateTime timestamp;
     private LogLevel level;
     private String errorType;
+    private String message;
+    private String reasonForError;
     private String rawLine;
     private Map<String, String> metadata;
 

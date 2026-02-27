@@ -14,15 +14,18 @@ import java.util.*;
 @Component
 public class ErrorAggregator {
 
-    @Value("${analysis.time-window-minutes:5}")
+    //@Value("${analysis.time-window-minutes:5}")
     private int timeWindowMinutes;
 
-    @Value("${analysis.spike-threshold:3}")
+   // @Value("${analysis.spike-threshold:3}")
     private int spikeThreshold;
 
     private static final DateTimeFormatter OUTPUT_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
-    public Map<String, Map<String, ErrorGroup>> aggregate(List<LogEntry> entries) {
+    public Map<String, Map<String, ErrorGroup>> aggregate(List<LogEntry> entries, int timeWindows, int spikeLimit) {
+        timeWindowMinutes = timeWindows;
+        spikeThreshold = spikeLimit;
+
         Map<String, Map<String, ErrorGroup>> result = new LinkedHashMap<>();
 
         for(LogEntry entry : entries) {
@@ -78,8 +81,20 @@ public class ErrorAggregator {
     }
 
     private String getTimeWindowLabel(LocalDateTime time) {
+
         int startMinute = (time.getMinute() / timeWindowMinutes) * timeWindowMinutes;
-        int endMinute   = startMinute + timeWindowMinutes;
-        return String.format("%02d:%02d - %02d:%02d", time.getHour(), startMinute, time.getHour(), endMinute);
+
+        LocalDateTime startTime = time
+                .withMinute(startMinute)
+                .withSecond(0)
+                .withNano(0);
+
+        LocalDateTime endTime = startTime.plusMinutes(timeWindowMinutes);
+
+        return String.format("%02d:%02d - %02d:%02d",
+                startTime.getHour(),
+                startTime.getMinute(),
+                endTime.getHour(),
+                endTime.getMinute());
     }
 }

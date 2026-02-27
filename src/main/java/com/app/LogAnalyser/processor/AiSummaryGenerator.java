@@ -57,28 +57,38 @@ public class AiSummaryGenerator {
                     log.info("Calling Ollama for: {} in window: {}", errorType, timeWindow);
                     String prompt   = buildPrompt(group);
                     String response = callOllama(prompt);
+                    System.out.println(response);
                     AiSummary summary = parseResponse(response, group);
 
                     summaryCache.put(cacheKey, summary);
                     group.setAiSummary(summary);
 
                 } catch(Exception e) {
-                    log.error("Ollama failed for: {}. Reason: {}", errorType, e.getMessage());
+                    log.error("Calling AI Exception : " , e);
                     group.setAiSummary(AiSummary.fallback(errorType));
                 }
             });
         });
     }
 
-    // Prompt now includes time window context
     private String buildPrompt(ErrorGroup group) {
-        return "You are a backend systems reliability engineer.\n" +
-                "Analyze the error below. Reply in EXACTLY 3 lines. No extra text.\n" +
-                "Line 1 must start with SUMMARY:\n" +
-                "Line 2 must start with CAUSE:\n" +
-                "Line 3 must start with FIX:\n" +
-                "No markdown. No bold. No bullet points.\n\n" +
-                group.toStructuredSummary();
+        return """
+            You are a software debug engineer.
+           
+            Output EXACTLY 3 lines.
+            
+            Format strictly:
+            
+            SUMMARY: <one sentence>
+            CAUSE: <one sentence>
+            FIX: <one sentence>
+            
+            No extra text.
+            No markdown.
+            No bullet points.
+            
+            Error:
+            """ + group.toStructuredSummary();
     }
 
     private String callOllama(String prompt) {
@@ -94,8 +104,7 @@ public class AiSummaryGenerator {
 
         HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
 
-        ResponseEntity<Map> response = restTemplate.postForEntity(
-                url, request, Map.class);
+        ResponseEntity<Map> response = restTemplate.postForEntity(url, request, Map.class);
 
         return response.getBody().get("response").toString();
     }
