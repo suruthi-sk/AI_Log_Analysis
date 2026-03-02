@@ -1,11 +1,17 @@
 package com.app.LogAnalyser.model;
 
+import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
+import lombok.NoArgsConstructor;
+
+import java.io.Serializable;
 
 @Data
 @Builder
-public class AiSummary {
+@NoArgsConstructor
+@AllArgsConstructor
+public class AiSummary implements Serializable {
 
     private String problemSummary;
     private String rootCause;

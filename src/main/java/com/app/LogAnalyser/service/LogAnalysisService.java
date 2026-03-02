@@ -1,8 +1,6 @@
 package com.app.LogAnalyser.service;
 
-import com.app.LogAnalyser.model.AnalysisResponse;
-import com.app.LogAnalyser.model.ErrorGroup;
-import com.app.LogAnalyser.model.LogEntry;
+import com.app.LogAnalyser.model.*;
 import com.app.LogAnalyser.processor.AiSummaryGenerator;
 import com.app.LogAnalyser.processor.ErrorAggregator;
 import com.app.LogAnalyser.processor.LogParser;
@@ -15,12 +13,15 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeParseException;
 import java.util.*;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
 public class LogAnalysisService {
+
+    private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+    private static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm");
 
     private final LogParser logParser;
     private final ErrorAggregator errorAggregator;
@@ -32,23 +33,55 @@ public class LogAnalysisService {
         this.aiSummaryGenerator = aiSummaryGenerator;
     }
 
-    public AnalysisResponse analyze(InputStream inputStream, String date, String fromTime, String toTime, int timeWindowMinutes, int spikeLimit, String levels) throws IOException {
-        log.info("Starting analysis | date: {} | from: {} | to: {} | window: {}min | levels: {}", date, fromTime, toTime, timeWindowMinutes, levels);
+    public ErrorTypesResponse getErrorTypes(InputStream inputStream, String date, String fromTime, String toTime, String levels) throws IOException {
+
+        log.info("Discovering error types | date: {} | from: {} | to: {} | levels: {}", date, fromTime, toTime, levels);
 
         LocalDateTime fromDateTime = buildDateTime(date, fromTime, false);
-        LocalDateTime toDateTime   = buildDateTime(date, toTime,   true);
-
-        log.info("Filter range: {} -> {}", fromDateTime, toDateTime);
-
+        LocalDateTime toDateTime = buildDateTime(date, toTime, true);
         Set<LogEntry.LogLevel> acceptedLevels = parseAcceptedLevels(levels);
 
         List<LogEntry> entries = logParser.parse(inputStream, fromDateTime, toDateTime, acceptedLevels);
+
+        Map<String, Integer> countMap = new LinkedHashMap<>();
+        for(LogEntry entry : entries) {
+            countMap.merge(entry.getErrorType(), 1, Integer::sum);
+        }
+
+        List<ErrorTypeInfo> errorTypes = countMap.entrySet().stream()
+                .map(e -> ErrorTypeInfo.builder()
+                        .errorType(e.getKey())
+                        .count(e.getValue())
+                        .build())
+                .collect(Collectors.toList());
+
+        log.info("Found {} unique error types across {} entries.", errorTypes.size(), entries.size());
+
+        return ErrorTypesResponse.builder()
+                .totalEntries(entries.size())
+                .uniqueErrorCount(errorTypes.size())
+                .errorTypes(errorTypes)
+                .analyzedAt(LocalDateTime.now())
+                .build();
+    }
+
+    public AnalysisResponse analyze(InputStream inputStream, String date, String fromTime, String toTime, int timeWindowMinutes, int spikeLimit, String levels, String errorTypes) throws IOException {
+
+        log.info("Starting analysis | date: {} | from: {} | to: {} | window: {}min | spikeLimit: {} | levels: {} | errorTypes: '{}'", date, fromTime, toTime, timeWindowMinutes, spikeLimit, levels, errorTypes);
+
+        LocalDateTime fromDateTime = buildDateTime(date, fromTime, false);
+        LocalDateTime toDateTime = buildDateTime(date, toTime, true);
+        Set<LogEntry.LogLevel> acceptedLevels = parseAcceptedLevels(levels);
+
+        Set<String> errorTypeFilter = parseErrorTypes(errorTypes);
+
+        List<LogEntry> entries = logParser.parse(inputStream, fromDateTime, toDateTime, acceptedLevels, errorTypeFilter);
 
         Map<String, Map<String, ErrorGroup>> bucketedGroups = errorAggregator.aggregate(entries, timeWindowMinutes, spikeLimit);
 
         aiSummaryGenerator.generateAndAssign(bucketedGroups);
 
-        log.info("Analysis complete. {} time windows found.", bucketedGroups.size());
+        log.info("Analysis complete. {} time windows, {} entries processed.", bucketedGroups.size(), entries.size());
 
         return AnalysisResponse.builder()
                 .groups(bucketedGroups)
@@ -59,18 +92,27 @@ public class LogAnalysisService {
 
     private Set<LogEntry.LogLevel> parseAcceptedLevels(String levels) {
         Set<LogEntry.LogLevel> result = new LinkedHashSet<>();
-        for (String level : levels.split(",")) {
-            try {
-                result.add(LogEntry.LogLevel.fromString(level.trim()));
-            } catch (Exception e) {
-                log.warn("Unknown level ignored: {}", level.trim());
-            }
+        for(String level : levels.split(",")) {
+            result.add(LogEntry.LogLevel.fromString(level.trim()));
         }
-        if (result.isEmpty()) {
+
+        if(result.isEmpty()) {
             result.add(LogEntry.LogLevel.ERROR);
             result.add(LogEntry.LogLevel.WARN);
         }
         return result;
+    }
+
+    private Set<String> parseErrorTypes(String errorTypes) {
+        if (errorTypes == null || errorTypes.isBlank())
+            return null;
+        Set<String> result = new LinkedHashSet<>();
+        for(String e : errorTypes.split(",")) {
+            String trimmed = e.trim();
+            if(!trimmed.isEmpty())
+                result.add(trimmed);
+        }
+        return result.isEmpty() ? null : result;
     }
 
     private LocalDateTime buildDateTime(String date, String time, boolean isEndOfDay) {
@@ -78,33 +120,8 @@ public class LogAnalysisService {
             return null;
         }
 
-        LocalDate parsedDate;
-        if(date == null || date.isBlank()) {
-            parsedDate = LocalDate.now();
-        } else {
-            try {
-                parsedDate = LocalDate.parse(date, DateTimeFormatter.ofPattern("yyyy-MM-dd"));
-            } catch (DateTimeParseException e) {
-                throw new IllegalArgumentException("Invalid date format. Use yyyy-MM-dd. Got: " + date);
-            } catch (Exception e) {
-                throw new RuntimeException("Some Error Occurred");
-            }
-        }
-
-        LocalTime parsedTime;
-        if(time == null || time.isBlank()) {
-            parsedTime = isEndOfDay ? LocalTime.of(23, 59, 59)
-                    : LocalTime.of(0, 0, 0);
-        } else {
-            try {
-                parsedTime = LocalTime.parse(time, DateTimeFormatter.ofPattern("HH:mm"));
-            } catch (DateTimeParseException e) {
-                throw new IllegalArgumentException("Invalid time format. Use HH:mm. Got: " + time);
-            } catch (Exception e) {
-                throw new RuntimeException("Some Error Occurred");
-            }
-        }
-
+        LocalDate parsedDate = (date == null || date.isBlank()) ? LocalDate.now() : LocalDate.parse(date.trim(), DATE_FORMAT);
+        LocalTime parsedTime = (time == null || time.isBlank()) ? (isEndOfDay ? LocalTime.of(23, 59, 59) : LocalTime.MIDNIGHT) : LocalTime.parse(time.trim(), TIME_FORMAT);
         return LocalDateTime.of(parsedDate, parsedTime);
     }
 }
