@@ -1,14 +1,12 @@
 package com.app.LogAnalyser.processor;
 
+import com.app.LogAnalyser.model.ErrorTypeInfo;
 import com.app.LogAnalyser.model.LogEntry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
+import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -35,15 +33,10 @@ public class LogParser {
         this.tracePattern = Pattern.compile(tracePatternStr);
         this.timeStampStart = Pattern.compile(timestampStartStr);
         this.formatter = DateTimeFormatter.ofPattern(timestampFormat);
-
-        log.info("LogParser initialised with patterns from properties.");
     }
 
-    public List<LogEntry> parse(InputStream inputStream, LocalDateTime fromDateTime, LocalDateTime toDateTime, Set<LogEntry.LogLevel> acceptedLevels) throws IOException {
-        return parse(inputStream, fromDateTime, toDateTime, acceptedLevels, null);
-    }
+    public List<LogEntry> parse(InputStream inputStream, LocalDateTime fromDateTime, LocalDateTime toDateTime, Set<LogEntry.LogLevel> acceptedLevels, Set<String> errorTypeFilters, Set<String> messageFilter) throws IOException {
 
-    public List<LogEntry> parse(InputStream inputStream, LocalDateTime fromDateTime, LocalDateTime toDateTime, Set<LogEntry.LogLevel> acceptedLevels, Set<String> errorTypeFilter) throws IOException {
         List<LogEntry> entries = new ArrayList<>();
 
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8))) {
@@ -53,7 +46,7 @@ public class LogParser {
             while((line = reader.readLine()) != null) {
                 if(timeStampStart.matcher(line).matches()) {
                     if(!currentBlock.isEmpty()) {
-                        LogEntry entry = buildEntry(currentBlock.toString(), fromDateTime, toDateTime, acceptedLevels, errorTypeFilter);
+                        LogEntry entry = buildEntry(currentBlock.toString(), fromDateTime, toDateTime, acceptedLevels, errorTypeFilters, messageFilter);
                         if(entry != null)
                             entries.add(entry);
                         currentBlock.setLength(0);
@@ -67,17 +60,15 @@ public class LogParser {
             }
 
             if(!currentBlock.isEmpty()) {
-                LogEntry entry = buildEntry(currentBlock.toString(), fromDateTime, toDateTime, acceptedLevels, errorTypeFilter);
+                LogEntry entry = buildEntry(currentBlock.toString(), fromDateTime, toDateTime, acceptedLevels, errorTypeFilters, messageFilter);
                 if(entry != null)
                     entries.add(entry);
             }
         }
-
-        log.info("Parsed {} valid entries (errorTypeFilter='{}')", entries.size(), errorTypeFilter);
         return entries;
     }
 
-    private LogEntry buildEntry(String block, LocalDateTime from, LocalDateTime to, Set<LogEntry.LogLevel> acceptedLevels, Set<String> errorTypeFilter) {
+    private LogEntry buildEntry(String block, LocalDateTime from, LocalDateTime to, Set<LogEntry.LogLevel> acceptedLevels, Set<String> errorTypeFilter, Set<String> messageFilter) {
         String[] lines = block.split("\n");
 
         Matcher matcher = logPattern.matcher(lines[0].trim());
@@ -154,6 +145,13 @@ public class LogParser {
             }
         }
 
+        if(messageFilter != null && !messageFilter.isEmpty()) {
+            if(!messageFilter.contains(message)) {
+                log.debug("Skipping entry — message '{}' not in filter set {}", message, messageFilter);
+                return null;
+            }
+        }
+
         Map<String, String> metadata = new LinkedHashMap<>();
         metadata.put("pid", pid);
         metadata.put("projectName", projectName);
@@ -173,11 +171,89 @@ public class LogParser {
                 .build();
     }
 
+    public Map<String, ErrorTypeInfo> parseForSummary(InputStream inputStream, LocalDateTime fromDateTime, LocalDateTime toDateTime, Set<LogEntry.LogLevel> acceptedLevels) throws IOException {
+
+        Map<String, ErrorTypeInfo> summaryMap = new LinkedHashMap<>();
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8))) {
+
+            String line;
+            StringBuilder currentBlock = new StringBuilder();
+
+            while((line = reader.readLine()) != null) {
+                if(timeStampStart.matcher(line).matches()) {
+                    if(!currentBlock.isEmpty()) {
+                        processBlockForSummary(currentBlock.toString(), fromDateTime, toDateTime, acceptedLevels, summaryMap);
+                        currentBlock.setLength(0);
+                    }
+                    currentBlock.append(line);
+                } else {
+                    if(!currentBlock.isEmpty()) {
+                        currentBlock.append("\n").append(line);
+                    }
+                }
+            }
+
+            if(!currentBlock.isEmpty()) {
+                processBlockForSummary(currentBlock.toString(), fromDateTime, toDateTime, acceptedLevels, summaryMap);
+            }
+        }
+        return summaryMap;
+    }
+
+    private void processBlockForSummary(String block, LocalDateTime from, LocalDateTime to, Set<LogEntry.LogLevel> acceptedLevels, Map<String, ErrorTypeInfo> summaryMap) {
+        String[] lines = block.split("\n");
+
+        Matcher matcher = logPattern.matcher(lines[0].trim());
+        if(!matcher.matches()) return;
+
+        String rawTimestamp = matcher.group(1);
+        String rawLevel = matcher.group(2);
+        String message = matcher.group(7).trim();
+
+        LocalDateTime timestamp;
+        try {
+            timestamp = LocalDateTime.parse(rawTimestamp, formatter);
+        } catch (Exception e) {
+            return;
+        }
+
+        if(!isWithinRange(timestamp, from, to))
+            return;
+
+        LogEntry.LogLevel level = LogEntry.LogLevel.fromString(rawLevel);
+        if(!acceptedLevels.contains(level))
+            return;
+
+        String errorType = extractErrorType(lines, message, level);
+
+        summaryMap.compute(errorType, (key, existing) -> {
+            if (existing == null) {
+                return ErrorTypeInfo.builder()
+                        .errorType(errorType)
+                        .message(message)
+                        .count(1)
+                        .build();
+            } else {
+                existing.setCount(existing.getCount() + 1);
+                return existing;
+            }
+        });
+    }
+
+    private String extractErrorType(String[] lines, String message, LogEntry.LogLevel level) {
+        for(String line : lines) {
+            Matcher traceMatcher = tracePattern.matcher(line.trim());
+            if(traceMatcher.matches()) {
+                return traceMatcher.group(1).trim();
+            }
+        }
+
+        return(level == LogEntry.LogLevel.ERROR || level == LogEntry.LogLevel.WARN) ? message : "Information";
+    }
+
     private boolean isWithinRange(LocalDateTime timestamp, LocalDateTime from, LocalDateTime to) {
-        if(from != null && timestamp.isBefore(from))
-            return false;
-        if(to != null && timestamp.isAfter(to))
-            return false;
+        if (from != null && timestamp.isBefore(from)) return false;
+        if (to != null && timestamp.isAfter(to)) return false;
         return true;
     }
 }

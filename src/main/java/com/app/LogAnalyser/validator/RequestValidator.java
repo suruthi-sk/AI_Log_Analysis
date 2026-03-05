@@ -13,15 +13,20 @@ import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 @Slf4j
 @Component
 public class RequestValidator {
-
     private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
     private static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm");
 
     private static final List<String> ALLOWED_LEVELS = List.of("ERROR", "WARN", "INFO", "DEBUG", "TRACE");
+
+    private static final Set<String> ALLOWED_GET_ERRORS_PARAMS = Set.of("file", "date", "fromTime", "toTime", "levels");
+
+    private static final Set<String> ALLOWED_ANALYZE_PARAMS = Set.of("file", "date", "fromTime", "toTime", "timeWindow", "spikeLimit", "levels", "errorTypes", "messageFilters");
 
     @Value("${analysis.validation.time-window.min:0}")
     private int timeWindowMin;
@@ -38,7 +43,26 @@ public class RequestValidator {
     @Value("${analysis.validation.file.max-size-mb:50}")
     private long maxFileSizeMb;
 
-    public ValidationResult validateAnalyze(MultipartFile file, String date, String fromTime, String toTime, int timeWindowMinutes, int spikeLimit, String levels, String errorTypes) {
+    public ValidationResult validateParams(Map<String, String[]> receivedParams, String endpoint) {
+        List<String> errors = new ArrayList<>();
+
+        Set<String> allowedParams = resolveAllowedParams(endpoint);
+
+        if (allowedParams == null) {
+            return new ValidationResult(errors);
+        }
+
+        for (String param : receivedParams.keySet()) {
+            if (!allowedParams.contains(param)) {
+                log.warn("Unknown param '{}' received for endpoint '{}'", param, endpoint);
+                errors.add("Unknown query parameter '" + param + "' is not allowed for this endpoint.");
+            }
+        }
+
+        return new ValidationResult(errors);
+    }
+
+    public ValidationResult validateAnalyze(MultipartFile file, String date, String fromTime, String toTime, int timeWindowMinutes, int spikeLimit, String levels, String errorTypes, String messageFilters) {
         List<String> errors = new ArrayList<>();
 
         validateFile(file, errors);
@@ -53,6 +77,7 @@ public class RequestValidator {
         validateSpikeLimit(spikeLimit, errors);
         validateLevels(levels, errors);
         validateErrorTypes(errorTypes, errors);
+        validateMessages(messageFilters, errors);
 
         if(!errors.isEmpty()) log.warn("Analyze validation failed: {}", errors);
         return new ValidationResult(errors);
@@ -102,7 +127,7 @@ public class RequestValidator {
         try {
             LocalDate.parse(date.trim(), DATE_FORMAT);
         } catch (DateTimeParseException e) {
-            errors.add("Invalid date format '" + date + "'. Expected: yyyy-MM-dd (e.g. 2024-01-15).");
+            errors.add("Invalid date format '" + date + "'. Expected: yyyy-MM-dd (e.g. 2026-01-15).");
         }
     }
 
@@ -171,6 +196,25 @@ public class RequestValidator {
                 errors.add("Each errorType value must be under 300 characters. Too long: '" + trimmed + "'.");
             }
         }
+    }
+
+    private void validateMessages(String messageFilters, List<String> errors) {
+        if(messageFilters == null || messageFilters.isBlank())
+            return;
+        for(String e : messageFilters.split(",")) {
+            String trimmed = e.trim();
+            if (trimmed.length() > 300) {
+                errors.add("Each Message value must be under 300 characters. Too long: '" + trimmed + "'.");
+            }
+        }
+    }
+
+    private Set<String> resolveAllowedParams(String endpoint) {
+        return switch (endpoint) {
+            case "getAllErrors" -> ALLOWED_GET_ERRORS_PARAMS;
+            case "analyze" -> ALLOWED_ANALYZE_PARAMS;
+            default -> null;
+        };
     }
 
     @Getter

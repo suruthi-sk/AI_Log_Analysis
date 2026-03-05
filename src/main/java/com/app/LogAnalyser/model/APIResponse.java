@@ -77,6 +77,7 @@ public class APIResponse<T> {
 
     public enum ErrorCode {
         VALIDATION_FAILED,
+        UNKNOWN_PARAMETER,
         EMPTY_FILE,
         INVALID_FILE_TYPE,
         FILE_TOO_LARGE,

@@ -7,6 +7,7 @@ import com.app.LogAnalyser.model.ErrorTypesResponse;
 import com.app.LogAnalyser.service.LogAnalysisService;
 import com.app.LogAnalyser.validator.RequestValidator;
 import com.app.LogAnalyser.validator.RequestValidator.ValidationResult;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -27,10 +28,19 @@ public class LogAnalysisController {
         this.requestValidator   = requestValidator;
     }
 
-    @PostMapping("/log/getAllErrors")
-    public ResponseEntity<APIResponse<ErrorTypesResponse>> getErrorTypes(@RequestParam("file") MultipartFile file, @RequestParam(value = "date", required = false) String date, @RequestParam(value = "fromTime", required = false) String fromTime, @RequestParam(value = "toTime",   required = false) String toTime, @RequestParam(value = "levels",   defaultValue = "ERROR,WARN") String levels) {
+    @PostMapping("/log/errors")
+    public ResponseEntity<APIResponse<ErrorTypesResponse>> getErrorTypes(@RequestParam("file") MultipartFile file, @RequestParam(value = "date", required = false) String date, @RequestParam(value = "fromTime", required = false) String fromTime, @RequestParam(value = "toTime",   required = false) String toTime, @RequestParam(value = "levels",   defaultValue = "ERROR,WARN") String levels, HttpServletRequest request) {
 
         log.info("GET /errors | file: {} | date: {} | from: {} | to: {} | levels: {}", file.getOriginalFilename(), date, fromTime, toTime, levels);
+
+        ValidationResult unknownParams = requestValidator.validateParams(request.getParameterMap(), "getAllErrors");
+
+        if(!unknownParams.isValid()) {
+            return ResponseEntity.badRequest()
+                    .body(APIResponse.fail(ErrorCode.UNKNOWN_PARAMETER,
+                            "Request contains unknown parameter(s).",
+                            unknownParams.getErrors()));
+        }
 
         ValidationResult validation = requestValidator.validateGetErrors(file, date, fromTime, toTime, levels);
 
@@ -54,11 +64,20 @@ public class LogAnalysisController {
     }
 
     @PostMapping("/log/analyze")
-    public ResponseEntity<APIResponse<AnalysisResponse>> analyze(@RequestParam("file") MultipartFile file, @RequestParam(value = "date", required = false) String date, @RequestParam(value = "fromTime", required = false) String fromTime, @RequestParam(value = "toTime", required = false) String toTime, @RequestParam(value = "timeWindow", defaultValue = "0") int timeWindowMinutes, @RequestParam(value = "spikeLimit", defaultValue = "3") int spikeLimit, @RequestParam(value = "levels", defaultValue = "ERROR,WARN") String levels, @RequestParam(value = "errorTypes", required = false) String errorTypes) {
+    public ResponseEntity<APIResponse<AnalysisResponse>> analyze(@RequestParam("file") MultipartFile file, @RequestParam(value = "date", required = false) String date, @RequestParam(value = "fromTime", required = false) String fromTime, @RequestParam(value = "toTime", required = false) String toTime, @RequestParam(value = "timeWindow", defaultValue = "0") int timeWindowMinutes, @RequestParam(value = "spikeLimit", defaultValue = "3") int spikeLimit, @RequestParam(value = "levels", defaultValue = "ERROR,WARN") String levels, @RequestParam(value = "errorTypes", required = false) String errorTypes, @RequestParam(value="messageFilters", required = false) String messageFilters, HttpServletRequest request) {
 
-        log.info("POST /analyze | file: {} | date: {} | from: {} | to: {} | window: {}min | spikeLimit: {} | levels: {} | errorTypes: '{}'", file.getOriginalFilename(), date, fromTime, toTime, timeWindowMinutes, spikeLimit, levels, errorTypes);
+        log.info("POST /analyze | file: {} | date: {} | from: {} | to: {} | window: {}min | spikeLimit: {} | levels: {} | errorTypes: '{}' | messageFilters: '{}'", file.getOriginalFilename(), date, fromTime, toTime, timeWindowMinutes, spikeLimit, levels, errorTypes, messageFilters);
 
-        ValidationResult validation = requestValidator.validateAnalyze(file, date, fromTime, toTime, timeWindowMinutes, spikeLimit, levels, errorTypes);
+        ValidationResult unknownParams = requestValidator.validateParams(request.getParameterMap(), "analyze");
+
+        if(!unknownParams.isValid()) {
+            return ResponseEntity.badRequest()
+                    .body(APIResponse.fail(ErrorCode.UNKNOWN_PARAMETER,
+                            "Request contains unknown parameter(s).",
+                            unknownParams.getErrors()));
+        }
+
+        ValidationResult validation = requestValidator.validateAnalyze(file, date, fromTime, toTime, timeWindowMinutes, spikeLimit, levels, errorTypes, messageFilters);
 
         if (!validation.isValid()) {
             return ResponseEntity.badRequest()
@@ -66,7 +85,7 @@ public class LogAnalysisController {
         }
 
         try {
-            AnalysisResponse response = logAnalysisService.analyze(file.getInputStream(), date, fromTime, toTime, timeWindowMinutes, spikeLimit, levels, errorTypes);
+            AnalysisResponse response = logAnalysisService.analyze(file.getInputStream(), date, fromTime, toTime, timeWindowMinutes, spikeLimit, levels, errorTypes, messageFilters);
             return ResponseEntity.ok(APIResponse.ok(response, "Log analysis completed successfully."));
 
         } catch (IOException e) {

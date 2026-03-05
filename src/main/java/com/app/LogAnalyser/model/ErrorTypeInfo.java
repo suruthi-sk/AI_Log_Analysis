@@ -8,4 +8,5 @@ import lombok.Data;
 public class ErrorTypeInfo {
     private String errorType;
     private int count;
+    private String message;
 }
