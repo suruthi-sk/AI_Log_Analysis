@@ -4,7 +4,6 @@ import lombok.Builder;
 import lombok.Data;
 
 import java.time.LocalDateTime;
-import java.util.List;
 import java.util.Map;
 
 @Data
@@ -13,4 +12,6 @@ public class AnalysisResponse {
     private Map<String, Map<String, ErrorGroup>> groups;
     private int totalLinesProcessed;
     private LocalDateTime analyzedAt;
+    private Integer matchCount;
+    private Integer framesAnalyzed;
 }

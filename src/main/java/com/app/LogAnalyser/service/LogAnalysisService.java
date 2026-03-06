@@ -5,6 +5,7 @@ import com.app.LogAnalyser.processor.AiSummaryGenerator;
 import com.app.LogAnalyser.processor.ErrorAggregator;
 import com.app.LogAnalyser.processor.LogParser;
 import com.app.LogAnalyser.processor.git.GitAnalysisProcessor;
+import com.app.LogAnalyser.processor.LogParser.MatchResult;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -61,7 +62,7 @@ public class LogAnalysisService {
                 .build();
     }
 
-    public AnalysisResponse analyze(InputStream inputStream, String date, String fromTime, String toTime, int timeWindowMinutes, int spikeLimit, String levels, String errorTypes, String messageFilters) throws IOException {
+    public AnalysisResponse analyze(InputStream inputStream, String date, String fromTime, String toTime, int timeWindowMinutes, int spikeLimit, String levels, String errorTypes, String messageFilters, String includeGit, String includeAi) throws IOException {
         log.info("Starting analysis | date: {} | from: {} | to: {} | window: {}min | " + "spikeLimit: {} | levels: {} | errorTypes: '{}' | messageFilters: '{}'", date, fromTime, toTime, timeWindowMinutes, spikeLimit, levels, errorTypes, messageFilters);
         LocalDateTime fromDateTime = buildDateTime(date, fromTime, false);
         LocalDateTime toDateTime = buildDateTime(date, toTime, true);
@@ -72,26 +73,66 @@ public class LogAnalysisService {
         List<LogEntry> entries = logParser.parse(inputStream, fromDateTime, toDateTime, acceptedLevels, errorTypeFilter, messages);
         log.info("Step 1 complete — parsed {} log entries.", entries.size());
 
-        if(errorTypeFilter != null) {
-            entries = entries.stream()
-                    .filter(e -> errorTypeFilter.contains(e.getErrorType()))
-                    .toList();
-        }
-
         Map<String, Map<String, ErrorGroup>> bucketedGroups = errorAggregator.aggregate(entries, timeWindowMinutes, spikeLimit);
         log.info("Step 2 complete — aggregated into {} time windows.", bucketedGroups.size());
 
-        gitAnalysisProcessor.analyseAndAssign(bucketedGroups);
-        log.info("Step 3 complete — Git blame analysis done.");
+        if(includeGit.equalsIgnoreCase("true")) {
+            gitAnalysisProcessor.analyseAndAssign(bucketedGroups);
+            log.info("Step 3 complete — Git blame analysis done.");
+        }
 
-        aiSummaryGenerator.generateAndAssign(bucketedGroups);
-        log.info("Step 4 complete — AI summary generation done.");
+        if(includeAi.equalsIgnoreCase("true")) {
+            aiSummaryGenerator.generateAndAssign(bucketedGroups);
+            log.info("Step 4 complete — AI summary generation done.");
+        }
 
         log.info("Full analysis complete. {} time windows, {} entries processed.", bucketedGroups.size(), entries.size());
 
         return AnalysisResponse.builder()
                 .groups(bucketedGroups)
                 .totalLinesProcessed(entries.size())
+                .analyzedAt(LocalDateTime.now())
+                .build();
+    }
+
+    public AnalysisResponse traceAnalyze(InputStream inputStream, String errorName, String stackTrace, String date, String fromTime, String toTime, int timeWindowMinutes, int spikeLimit, String levels, String includeAi) throws IOException {
+        log.info("Starting trace analysis | errorName: '{}' | date: {} | from: {} | to: {} | window: {}min | spikeLimit: {} | levels: {}", errorName, date, fromTime, toTime, timeWindowMinutes, spikeLimit, levels);
+
+        LocalDateTime fromDateTime = buildDateTime(date, fromTime, false);
+        LocalDateTime toDateTime = buildDateTime(date, toTime, true);
+        Set<LogEntry.LogLevel> acceptedLevels = parseAcceptedLevels(levels);
+
+        MatchResult matchResult = logParser.parseAndMatch(inputStream, errorName, stackTrace, fromDateTime, toDateTime, acceptedLevels);
+        log.info("Step 1 complete — matched {} entries for error '{}'.", matchResult.matchCount, errorName);
+
+        if(matchResult.entries.isEmpty()) {
+            log.warn("No matching entries found for error '{}'. Returning empty response.", errorName);
+            return AnalysisResponse.builder()
+                    .groups(new LinkedHashMap<>())
+                    .totalLinesProcessed(0)
+                    .matchCount(0)
+                    .framesAnalyzed(0)
+                    .analyzedAt(LocalDateTime.now())
+                    .build();
+        }
+
+        Map<String, Map<String, ErrorGroup>> bucketedGroups = errorAggregator.aggregate(matchResult.entries, timeWindowMinutes, spikeLimit);
+        log.info("Step 2 complete — aggregated into {} time windows.", bucketedGroups.size());
+
+        int framesAnalyzed = gitAnalysisProcessor.analyseFramesAndAssign(bucketedGroups, stackTrace);
+        log.info("Step 3 complete — Git blame done on {} frame(s).", framesAnalyzed);
+
+        if(includeAi.equalsIgnoreCase("true")) {
+            aiSummaryGenerator.generateAndAssign(bucketedGroups);
+            log.info("Step 4 complete — AI summary generation done.");
+        }
+        log.info("Trace analysis complete. {} matches | {} time windows | {} frames analyzed.", matchResult.matchCount, bucketedGroups.size(), framesAnalyzed);
+
+        return AnalysisResponse.builder()
+                .groups(bucketedGroups)
+                .totalLinesProcessed(matchResult.matchCount)
+                .matchCount(matchResult.matchCount)
+                .framesAnalyzed(framesAnalyzed)
                 .analyzedAt(LocalDateTime.now())
                 .build();
     }

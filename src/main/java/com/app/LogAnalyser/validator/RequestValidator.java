@@ -26,7 +26,9 @@ public class RequestValidator {
 
     private static final Set<String> ALLOWED_GET_ERRORS_PARAMS = Set.of("file", "date", "fromTime", "toTime", "levels");
 
-    private static final Set<String> ALLOWED_ANALYZE_PARAMS = Set.of("file", "date", "fromTime", "toTime", "timeWindow", "spikeLimit", "levels", "errorTypes", "messageFilters");
+    private static final Set<String> ALLOWED_ANALYZE_PARAMS = Set.of("file", "date", "fromTime", "toTime", "timeWindow", "spikeLimit", "levels", "errorTypes", "messageFilters", "includeGit", "includeAi");
+
+    private static final Set<String> ALLOWED_TRACE_ANALYZE_PARAMS = Set.of("file", "errorName", "stackTrace", "date", "fromTime", "toTime", "timeWindow", "spikeLimit", "levels", "includeGit", "includeAi");
 
     @Value("${analysis.validation.time-window.min:0}")
     private int timeWindowMin;
@@ -42,6 +44,9 @@ public class RequestValidator {
 
     @Value("${analysis.validation.file.max-size-mb:50}")
     private long maxFileSizeMb;
+
+    @Value("${analysis.validation.stack-trace.max-length:5000}")
+    private int maxStackTraceLength;
 
     public ValidationResult validateParams(Map<String, String[]> receivedParams, String endpoint) {
         List<String> errors = new ArrayList<>();
@@ -62,7 +67,7 @@ public class RequestValidator {
         return new ValidationResult(errors);
     }
 
-    public ValidationResult validateAnalyze(MultipartFile file, String date, String fromTime, String toTime, int timeWindowMinutes, int spikeLimit, String levels, String errorTypes, String messageFilters) {
+    public ValidationResult validateAnalyze(MultipartFile file, String date, String fromTime, String toTime, int timeWindowMinutes, int spikeLimit, String levels, String errorTypes, String messageFilters, String includeAi, String includeGit) {
         List<String> errors = new ArrayList<>();
 
         validateFile(file, errors);
@@ -78,6 +83,8 @@ public class RequestValidator {
         validateLevels(levels, errors);
         validateErrorTypes(errorTypes, errors);
         validateMessages(messageFilters, errors);
+        validateBooleanParam("includeGit", includeGit, errors);
+        validateBooleanParam("includeAi", includeAi, errors);
 
         if(!errors.isEmpty()) log.warn("Analyze validation failed: {}", errors);
         return new ValidationResult(errors);
@@ -99,6 +106,49 @@ public class RequestValidator {
         if(!errors.isEmpty())
             log.warn("GetErrors validation failed: {}", errors);
         return new ValidationResult(errors);
+    }
+
+    public ValidationResult validateTraceAnalyze(MultipartFile file, String errorName, String stackTrace, String date, String fromTime, String toTime, int timeWindowMinutes, int spikeLimit, String levels, String includeAi) {
+        List<String> errors = new ArrayList<>();
+
+        validateFile(file, errors);
+        validateErrorName(errorName, errors);
+        validateStackTrace(stackTrace, errors);
+        validateDate(date, errors);
+
+        boolean fromOk = validateTime("fromTime", fromTime, errors);
+        boolean toOk = validateTime("toTime",   toTime,   errors);
+        if(fromOk && toOk)
+            validateTimeRange(fromTime, toTime, errors);
+
+        validateTimeWindow(timeWindowMinutes, errors);
+        validateSpikeLimit(spikeLimit, errors);
+        validateLevels(levels, errors);
+        validateBooleanParam("includeAi", includeAi, errors);
+
+        if(!errors.isEmpty())
+            log.warn("TraceAnalyze validation failed: {}", errors);
+        return new ValidationResult(errors);
+    }
+
+    private void validateErrorName(String errorName, List<String> errors) {
+        if(errorName == null || errorName.isBlank()) {
+            errors.add("errorName must not be blank.");
+            return;
+        }
+        if(errorName.trim().length() > 300) {
+            errors.add("errorName must be under 300 characters. Received length: " + errorName.trim().length() + ".");
+        }
+    }
+
+    private void validateStackTrace(String stackTrace, List<String> errors) {
+        if(stackTrace == null || stackTrace.isBlank()) {
+            errors.add("stackTrace must not be blank.");
+            return;
+        }
+        if(stackTrace.trim().length() > maxStackTraceLength) {
+            errors.add("stackTrace exceeds the maximum allowed length of " + maxStackTraceLength + " characters. Received length: " + stackTrace.trim().length() + ".");
+        }
     }
 
     private void validateFile(MultipartFile file, List<String> errors) {
@@ -209,10 +259,19 @@ public class RequestValidator {
         }
     }
 
+    private void validateBooleanParam(String fieldName, String value, List<String> errors) {
+        if(value == null || value.isBlank())
+            return;
+        if(!value.trim().equalsIgnoreCase("true") && !value.trim().equalsIgnoreCase("false")) {
+            errors.add("'" + fieldName + "' must be 'true' or 'false'. Received: '" + value + "'.");
+        }
+    }
+
     private Set<String> resolveAllowedParams(String endpoint) {
         return switch (endpoint) {
-            case "getAllErrors" -> ALLOWED_GET_ERRORS_PARAMS;
+            case "errors" -> ALLOWED_GET_ERRORS_PARAMS;
             case "analyze" -> ALLOWED_ANALYZE_PARAMS;
+            case "traceAnalyse" -> ALLOWED_TRACE_ANALYZE_PARAMS;
             default -> null;
         };
     }

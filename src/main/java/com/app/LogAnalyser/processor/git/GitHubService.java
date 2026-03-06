@@ -76,23 +76,21 @@ public class GitHubService implements GitProviderService {
     private List<Map<String, Object>> fetchBlameRanges(String filePath) {
 
         String query = String.format("""
-            {
-              repository(owner: "%s", name: "%s") {
-                ref(qualifiedName: "%s") {
-                  target {
-                    ... on Commit {
-                      blame(path: "%s") {
-                        ranges {
-                          startingLine
-                          endingLine
-                          commit {
-                            oid
-                            message
-                            committedDate
-                            author {
-                              name
-                            }
-                          }
+        {
+          repository(owner: "%s", name: "%s") {
+            ref(qualifiedName: "%s") {
+              target {
+                ... on Commit {
+                  blame(path: "%s") {
+                    ranges {
+                      startingLine
+                      endingLine
+                      commit {
+                        oid
+                        message
+                        committedDate
+                        author {
+                          name
                         }
                       }
                     }
@@ -100,7 +98,9 @@ public class GitHubService implements GitProviderService {
                 }
               }
             }
-            """, owner, repo, branch, filePath);
+          }
+        }
+        """, owner, repo, branch, filePath);
 
         Map<String, String> requestBody = new HashMap<>();
         requestBody.put("query", query);
@@ -109,21 +109,51 @@ public class GitHubService implements GitProviderService {
             ResponseEntity<Map> response = restTemplate.exchange(GITHUB_GRAPHQL_URL, HttpMethod.POST, new HttpEntity<>(requestBody, buildHeaders()), Map.class);
 
             Map<String, Object> body = response.getBody();
-            if(body == null)
+            if(body == null) {
+                log.warn("GitHub blame: response body is null for file '{}'", filePath);
                 return null;
+            }
+
+            if(body.containsKey("errors")) {
+                log.warn("GitHub blame: GraphQL errors returned for file '{}': {}", filePath, body.get("errors"));
+                return null;
+            }
 
             Map<String, Object> data = (Map<String, Object>) body.get("data");
-            Map<String, Object> repository = (Map<String, Object>) data.get("repository");
-            Map<String, Object> ref = (Map<String, Object>) repository.get("ref");
+            if(data == null) {
+                log.warn("GitHub blame: 'data' field is null for file '{}'", filePath);
+                return null;
+            }
 
+            Map<String, Object> repository = (Map<String, Object>) data.get("repository");
+            if(repository == null) {
+                log.warn("GitHub blame: 'repository' not found — check owner '{}' and repo '{}'", owner, repo);
+                return null;
+            }
+
+            Map<String, Object> ref = (Map<String, Object>) repository.get("ref");
             if(ref == null) {
-                log.warn("GitHub blame: branch '{}' not found in repo", branch);
+                log.warn("GitHub blame: branch '{}' not found in repo '{}'", branch, repo);
                 return Collections.emptyList();
             }
 
             Map<String, Object> target = (Map<String, Object>) ref.get("target");
+            if(target == null) {
+                log.warn("GitHub blame: 'target' is null for branch '{}' in file '{}'", branch, filePath);
+                return Collections.emptyList();
+            }
+
             Map<String, Object> blame = (Map<String, Object>) target.get("blame");
+            if(blame == null) {
+                log.warn("GitHub blame: 'blame' field is null for file '{}'", filePath);
+                return Collections.emptyList();
+            }
+
             List<Map<String, Object>> ranges = (List<Map<String, Object>>) blame.get("ranges");
+            if(ranges == null) {
+                log.warn("GitHub blame: 'ranges' field is null for file '{}'", filePath);
+                return Collections.emptyList();
+            }
 
             log.info("GitHub blame: got {} ranges for file '{}'", ranges.size(), filePath);
             return ranges;

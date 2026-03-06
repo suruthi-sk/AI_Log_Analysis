@@ -68,6 +68,93 @@ public class LogParser {
         return entries;
     }
 
+    public MatchResult parseAndMatch(InputStream inputStream, String errorName, String stackTrace, LocalDateTime fromDateTime, LocalDateTime toDateTime, Set<LogEntry.LogLevel> acceptedLevels) throws IOException {
+        List<LogEntry> matchedEntries = new ArrayList<>();
+        int totalScanned = 0;
+        String normalizedInput = normalizeTrace(stackTrace);
+
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8))) {
+            String line;
+            StringBuilder currentBlock = new StringBuilder();
+
+            while((line = reader.readLine()) != null) {
+                if(timeStampStart.matcher(line).matches()) {
+                    if(!currentBlock.isEmpty()) {
+                        LogEntry entry = buildEntry(currentBlock.toString(), fromDateTime, toDateTime, acceptedLevels, null, null);
+                        if(entry != null) {
+                            totalScanned++;
+                            if(matches(entry, errorName, normalizedInput))
+                                matchedEntries.add(entry);
+                        }
+                        currentBlock.setLength(0);
+                    }
+                    currentBlock.append(line);
+                } else {
+                    if(!currentBlock.isEmpty()) {
+                        currentBlock.append("\n").append(line);
+                    }
+                }
+            }
+
+            if(!currentBlock.isEmpty()) {
+                LogEntry entry = buildEntry(currentBlock.toString(), fromDateTime, toDateTime, acceptedLevels, null, null);
+                if(entry != null) {
+                    totalScanned++;
+                    if(matches(entry, errorName, normalizedInput))
+                        matchedEntries.add(entry);
+                }
+            }
+        }
+
+        log.info("Trace match complete — scanned: {} | matched: {}", totalScanned, matchedEntries.size());
+        return new MatchResult(matchedEntries, matchedEntries.size());
+    }
+
+    private boolean matches(LogEntry entry, String errorName, String normalizedInputTrace) {
+        if(!entry.getErrorType().equals(errorName)) {
+            log.debug("Error type mismatch — expected: '{}' | got: '{}'", errorName, entry.getErrorType());
+            return false;
+        }
+
+        String entryTrace = entry.getMetadata().get("stackTrace");
+        if(entryTrace == null) {
+            log.debug("No stack trace in entry for error type '{}'", errorName);
+            return false;
+        }
+
+        boolean traceMatches = normalizedInputTrace.contains(normalizeTrace(entryTrace));
+        if(!traceMatches)
+            log.debug("Stack trace mismatch for error type '{}'", errorName);
+
+        return traceMatches;
+    }
+
+    private String normalizeTrace(String trace) {
+        if(trace == null)
+            return "";
+
+        String normalized = trace
+                .replace("\\n", "\n")
+                .replace("\\t", "\t")
+                .replace("\\\"", "\"");
+
+        return Arrays.stream(normalized.split("\n"))
+                .map(String::trim)
+                .filter(l -> !l.isBlank())
+                .reduce((a, b) -> a + "\n" + b)
+                .orElse("");
+    }
+
+    public static class MatchResult {
+        public final List<LogEntry> entries;
+        public final int matchCount;
+
+        public MatchResult(List<LogEntry> entries, int matchCount) {
+            this.entries   = entries;
+            this.matchCount = matchCount;
+        }
+    }
+
     private LogEntry buildEntry(String block, LocalDateTime from, LocalDateTime to, Set<LogEntry.LogLevel> acceptedLevels, Set<String> errorTypeFilter, Set<String> messageFilter) {
         String[] lines = block.split("\n");
 
